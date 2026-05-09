@@ -27,4 +27,4 @@ Android Studio에서 프로젝트 루트(`udam`)를 열고 Gradle Sync 후 실�
 7. 검색창 마스킹, 자동 입력, 검색 버튼 안내 확인
 
 ## 자율 주행 하네스
-이 프로젝트는 `greatSumini/cc-system` 기반 자율 주행 하네스를 사용해 ideation → plan-and-build → commit → check 루프를 반복할 수 있다. 실행자는 깨끗한 git 상태에서 `python scripts/run-server.py`를 실행한다. `run-server.py`가 spawn하는 Claude 세션에만 `HARNESS_HEADLESS=1`이 주입되며, 일반 대화형 세션에서는 직접 export하지 않는다.
+이 프로젝트는 `gyutaetae/codex-harness` 기반 Codex 하네스를 사용한다. 문서 생성부터 다시 구현하려면 대화형 세션에서 `하네스 시작: <요구사항>`으로 `.codex/skills/plan-and-build` 흐름을 시작하고, task/phase 생성 후 `python scripts/run_phases.py {id}-{name}`으로 각 phase를 Codex CLI 세션에서 직렬 실행한다.

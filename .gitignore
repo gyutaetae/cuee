@@ -4,4 +4,5 @@ app/build/
 local.properties
 *.iml
 .idea/
-iterations/*/*.log
+tasks/*/phase*-output.json
+tasks/*/phase*-last-message.txt
