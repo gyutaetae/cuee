@@ -26,3 +26,5 @@ Android Studio에서 프로젝트 루트(`udam`)를 열고 Gradle Sync 후 실�
 6. "물티슈 찾아줘" 말하기
 7. 검색창 마스킹, 자동 입력, 검색 버튼 안내 확인
 
+## 자율 주행 하네스
+이 프로젝트는 `greatSumini/cc-system` 기반 자율 주행 하네스를 사용해 ideation → plan-and-build → commit → check 루프를 반복할 수 있다. 실행자는 깨끗한 git 상태에서 `python scripts/run-server.py`를 실행한다. `run-server.py`가 spawn하는 Claude 세션에만 `HARNESS_HEADLESS=1`이 주입되며, 일반 대화형 세션에서는 직접 export하지 않는다.
