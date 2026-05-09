@@ -11,6 +11,7 @@ Example: python3 run-phases.py 0-mvp
 import itertools
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -29,9 +30,23 @@ TOP_INDEX_FILE = TASKS_DIR / "index.json"
 # aliases, so resolving `claude` via $PATH can silently pick up a stale
 # pnpm-global install. Pin to the known-good binary; override via
 # CLAUDE_BIN env var if needed.
-CLAUDE_BIN = os.environ.get(
-    "CLAUDE_BIN", "/Users/choesumin/.claude/local/claude"
-)
+def default_claude_bin() -> str:
+    if os.name == "nt":
+        return (
+            os.environ.get("CLAUDE_BIN")
+            or shutil.which("claude.cmd")
+            or shutil.which("claude.exe")
+            or shutil.which("claude")
+            or "claude.cmd"
+        )
+    return (
+        os.environ.get("CLAUDE_BIN")
+        or shutil.which("claude")
+        or "/Users/choesumin/.claude/local/claude"
+    )
+
+
+CLAUDE_BIN = default_claude_bin()
 
 KST = timezone(timedelta(hours=9))
 
@@ -486,7 +501,7 @@ def main():
             # Generate docs-diff.md after phase 0 (docs update)
             if phase_num == 0:
                 subprocess.run(
-                    ["python3", str(
+                    [sys.executable, str(
                         ROOT / "scripts" / "gen-docs-diff.py"), str(task_dir), baseline],
                     cwd=str(ROOT),
                 )
