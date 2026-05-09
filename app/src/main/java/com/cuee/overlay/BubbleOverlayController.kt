@@ -26,7 +26,13 @@ class BubbleOverlayController(
     private var dragging = false
 
     fun show(side: BubbleSide = BubbleSide.RIGHT, yRatio: Float = 0.55f) {
-        if (bubble != null) return
+        bubble?.let { existing ->
+            params?.let { existingParams ->
+                if (runCatching { windowManager.updateViewLayout(existing, existingParams) }.isSuccess) return
+            }
+            bubble = null
+            params = null
+        }
         val screen = windowManager.screenBounds()
         val size = context.dp(60)
         val x = if (side == BubbleSide.LEFT) 0 else screen.width() - size

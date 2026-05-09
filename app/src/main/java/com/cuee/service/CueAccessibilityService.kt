@@ -11,6 +11,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.cuee.data.AppCapabilityRepository
+import com.cuee.data.BubbleSide
 import com.cuee.data.UserSettingsStore
 import com.cuee.engine.CueEngine
 import com.cuee.engine.CueEngineHost
@@ -44,6 +45,8 @@ class CueAccessibilityService : AccessibilityService(), CueEngineHost {
     private lateinit var mask: MaskOverlayController
     private lateinit var scrollHint: ScrollHintController
     private var lastEventAt = 0L
+    private var bubbleSide = BubbleSide.RIGHT
+    private var bubbleYRatio = 0.55f
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -60,8 +63,9 @@ class CueAccessibilityService : AccessibilityService(), CueEngineHost {
                 engine.handleVoiceText(text)
             },
             onFailure = {
-                speechPanel.showFailure("잘 못 들었어요. 다시 말씀해 주세요.")
-                speak("잘 못 들었어요. 다시 말씀해 주세요.")
+                Log.i(TAG, "Speech recognition failed; hiding temporary failure panel")
+                speechPanel.hide()
+                bubble.show(bubbleSide, bubbleYRatio)
             }
         )
         bubble = BubbleOverlayController(
@@ -79,6 +83,8 @@ class CueAccessibilityService : AccessibilityService(), CueEngineHost {
         scrollHint = ScrollHintController(applicationContext, windowManager)
         scope.launch {
             settingsStore.settings.collect { settings ->
+                bubbleSide = settings.bubbleSide
+                bubbleYRatio = settings.bubbleYRatio
                 if (settings.bubbleEnabled) {
                     bubble.show(settings.bubbleSide, settings.bubbleYRatio)
                 } else {
