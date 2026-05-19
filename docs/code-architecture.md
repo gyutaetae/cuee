@@ -1,179 +1,252 @@
-# 코드 아키텍처
+# 코드 아키텍처: KorailTalk MVP
 
-## 아키텍처 원칙
-- Kotlin Android Native.
-- MVP는 단일 앱 모듈로 시작한다. 멀티모듈은 아직 금지.
-- Compose는 앱 내부 화면에 사용 가능. 오버레이는 Android View 기반이 더 안정적이다.
-- 복잡한 Clean Architecture보다 명확한 패키지 분리와 작은 클래스가 우선이다.
-- 핵심 경로는 STT 결과 이후 1초 안에 마스킹해야 한다.
+## 원칙
 
-## 패키지 구조
+- 코레일톡 단일 앱만 지원한다.
+- Kotlin Android Native 단일 모듈.
+- 실제 코레일톡 위 `AccessibilityService` + `TYPE_ACCESSIBILITY_OVERLAY`.
+- AI API, 자동 클릭, 자동 예매, 로그인, 결제, 인증, 예매 확정 없음.
+- 빠른 안내보다 정확한 안내가 우선.
+- Android service는 얇게, 판단 로직은 unit test 가능한 domain layer에 둔다.
+
+## Runtime Flow
+
 ```text
-app/
-  ui/
-    onboarding/
-    tutorial/
-    home/
-    terms/
-  service/
-    CueAccessibilityService.kt
+cue bubble tap
+ -> LISTENING
+ -> SpeechController
+ -> KorailCommandParser
+ -> AccessibilitySnapshotMapper
+ -> SafetyPolicy
+ -> TargetScorer
+ -> CandidateResolver
+ -> GuideSession
+ -> MaskOverlayController
+ -> user taps exposed app area
+ -> next accessibility event
+ -> repeat up to 3 steps
+```
+
+Stop if:
+
+- package가 코레일톡이 아님
+- 로그인/개인정보/결제/인증/예매 확정 화면
+- 후보 score 낮음
+- 후보 겹침 해소 실패
+- 사용자 취소
+- 3-step 도달
+
+## Package Layout
+
+```text
+app/src/main/java/com/cuee/
+  data/
+    SettingsRepository.kt
+    DataStoreSettingsRepository.kt
+    UtMetricRepository.kt
+  domain/
+    command/
+      KorailCommand.kt
+      KorailCommandParser.kt
+      DefaultKorailCommandParser.kt
+    safety/
+      SafetyPolicy.kt
+      DefaultSafetyPolicy.kt
+      SafetyDecision.kt
+      StopReason.kt
+    scoring/
+      Bounds.kt
+      ScreenNode.kt
+      ScreenSnapshot.kt
+      TargetCandidate.kt
+      TargetScorer.kt
+      KorailTargetScorer.kt
+      CandidateResolver.kt
+      ClusterCandidateResolver.kt
+    session/
+      GuideState.kt
+      GuideSession.kt
+      DefaultGuideSession.kt
+      GuideStepResult.kt
+      OverlayInstruction.kt
+  accessibility/
+    AccessibilitySnapshotMapper.kt
+    KorailScreenAnalyzer.kt
   overlay/
     BubbleOverlayController.kt
-    SpeechPanelController.kt
     MaskOverlayController.kt
-    DragDismissController.kt
-  engine/
-    CueEngine.kt
-    IntentParser.kt
-    FlowController.kt
-    ScreenContextDetector.kt
-    NodeTreeReader.kt
-    NodeMatcher.kt
-    SafetyGuard.kt
-    TextExtractor.kt
-  data/
-    UserSettingsStore.kt
-    AppCapabilityRepository.kt
-  voice/
-    SpeechController.kt
-    TtsController.kt
-  launcher/
-    AppLauncher.kt
+    CandidateHighlighter.kt
+    OverlayLayoutCalculator.kt
+  speech/
+    AndroidSpeechController.kt
+    AndroidTtsController.kt
+  service/
+    CueAccessibilityService.kt
+  ui/
+    MainActivity.kt
 ```
 
-## 주요 컴포넌트
+## Module Contracts
+
 ### CueAccessibilityService
-- 접근성 이벤트 수신.
-- 현재 루트 노드 제공.
-- 화면 변경, 클릭, 콘텐츠 변경 이벤트를 `CueEngine`에 전달.
-- 큐 자체 오버레이 이벤트와 외부 앱 이벤트를 구분한다.
 
-### OverlayController 계열
-- `BubbleOverlayController`: 대기 동그라미, 드래그, 가장자리 스냅.
-- `SpeechPanelController`: 듣는 중/찾는 중 표시.
-- `MaskOverlayController`: 후보 영역을 제외하고 흰색 마스킹.
-- `DragDismissController`: 드래그 중 하단 X 표시와 끄기 처리.
+Android lifecycle/orchestration only:
 
-### CueEngine
-요청 처리의 진입점.
+- 접근성 이벤트 수신
+- root node 제공
+- overlay attach/detach
+- speech/domain/overlay 연결
 
-```text
-STT result
- -> IntentParser
- -> SafetyGuard pre-check
- -> NodeTreeReader
- -> ScreenContextDetector
- -> NodeMatcher
- -> FlowController
- -> OverlayController
+금지:
+
+- parsing/scoring/safety 정책 직접 구현
+- 화면/음성 원문 저장
+
+### Speech
+
+```kotlin
+interface SpeechController {
+    fun startListening(localeTag: String = "ko-KR")
+    fun stopListening()
+}
 ```
 
-### IntentParser
-- 규칙 기반.
-- AI API 사용 금지.
-- 지원 범위 밖 요청은 빠르게 실패한다.
-- 쿠팡 검색어와 카톡 메시지 본문만 추출한다.
+- MVP locale은 `ko-KR`.
+- bubble 외부 터치 또는 코레일톡 화면 클릭 시 listening 중단.
+- STT 원문은 parser 입력으로만 사용하고 저장하지 않음.
 
-### ScreenContextDetector
-- 점수 기반 단독 탐색의 한계를 줄인다.
-- 앱별 화면 상태를 2-3개만 판단한다.
-- 예: `COUPANG_HOME`, `COUPANG_SEARCH_INPUT`, `KAKAO_CHAT_ROOM`, `KORAIL_HOME`, `SENSITIVE`.
+### Command
 
-### NodeMatcher
-- 현재 `ScreenContext`에서 가능한 `TargetType`만 찾는다.
-- 좌표 레시피를 쓰지 않는다.
-- 텍스트, contentDescription, className, editable, clickable, actions, bounds를 점수화한다.
-
-### SafetyGuard
-- 금지 버튼 후보 제거.
-- 민감 화면 감지.
-- 자동 입력 금지 여부 판단.
-- `확인`, `동의`는 민감 화면에서만 차단한다.
-
-### FlowController
-- 한 요청당 최대 5단계.
-- 스크롤 재탐색 최대 3회.
-- 마스킹 12초 무동작 시 종료.
-- 민감 화면, 실패, 사용자 화살표 종료 시 세션 폐기.
-
-### SpeechController
-- Android `SpeechRecognizer` 사용.
-- 가능하면 on-device recognizer 우선.
-- 실패 시 "다시 말하기"로 회복.
-
-### TtsController
-- 짧은 존댓말.
-- 기본 속도 1.0.
-- 마스킹 중 화면 텍스트 대신 음성으로 안내.
-
-## NodeMatcher 정책
-### 필터
-제외:
-- disabled 노드
-- bounds 없음
-- 화면 밖 bounds
-- 24dp보다 작은 영역
-- 금지 키워드 포함
-- 현재 앱/시스템 키보드/큐 외 이상한 패키지
-
-### 점수 기준
-```text
-정확 키워드 일치 +60
-부분 키워드 일치 +35
-contentDescription 일치 +45
-editable + target이 입력칸 +50
-clickable + target이 버튼 +25
-EditText class +30
-Button/ImageButton/TextView class +10
-상태별 위치 힌트 +10
-SET_TEXT action + 자동 입력 필요 +20
-너무 일반적인 텍스트 -20
-긴 문단 -30
-형제 후보 과다 -10
+```kotlin
+interface KorailCommandParser {
+    fun parse(utterance: String): KorailCommand?
+}
 ```
 
-### 후보 선택
-- 75점 이상: 강한 후보
-- 60-74점: 약한 후보
-- 60점 미만: 제외
-- 강한 후보 1개: 바로 안내
-- 강한 후보 2-3개: 모두 노출
-- 강한 후보 4개 이상: 상위 3개만, 단 3위와 4위 점수 차 10점 이상일 때만
-- 약한 후보만 있음 + 스크롤 가능: 스크롤 안내
-- 그 외 실패
+- 한국어 명령 2개만 지원.
+- 지원 밖 요청은 빠르게 실패.
 
-## 마스킹 구현
-- 전체 흰색 단일 오버레이에 구멍을 뚫는 방식은 피한다.
-- 후보 영역을 제외한 주변을 여러 흰색 오버레이 사각형으로 덮는다.
-- 후보 영역은 오버레이가 없어 실제 앱 터치가 전달된다.
-- 후보 bounds padding은 4-8dp, 기본 6dp.
-- 후보가 12dp 이내로 가까우면 노출 영역 병합.
-- 병합 영역이 화면의 35% 이상이면 실패 처리.
-- 좌측 상단 화살표는 마스킹 중에만 표시한다.
+### Accessibility Mapping
 
-## 자동 입력
-- `ACTION_SET_TEXT` 우선.
-- 성공 판단은 `performAction` 반환값 우선.
-- 쿠팡 검색어 입력 후 키보드 검색 버튼을 먼저 찾는다.
-- 키보드 검색 버튼이 없으면 앱 검색 버튼을 찾는다.
-- 카톡 메시지 입력 후 바로 종료하고 "보내기 전 내용을 확인해 주세요." 안내.
+```kotlin
+interface AccessibilitySnapshotMapper {
+    fun map(root: AccessibilityNodeInfo?): ScreenSnapshot
+}
+```
 
-## 앱 실행
-- "쿠팡 열어줘", "카카오톡 열어줘", "코레일 열어줘"만 지원.
-- Android intent로 앱만 연다.
-- 앱 실행 후 자동 안내는 시작하지 않는다.
+- Android node 객체를 오래 보관하지 않음.
+- text/contentDescription은 메모리 분석에만 사용.
 
-## 성능 목표
-- STT 결과 이후 1초 이내 오버레이 변화.
-- 노드 트리 변환 100ms 이하 목표.
-- 후보 계산 50ms 이하 목표.
-- 오버레이 표시 100ms 이하 목표.
+### Safety
 
-## 테스트 기준
-- 각 지원 명령은 30회 중 27회 이상 성공해야 통과.
-- 최소 조합:
-  - 삼성 실기기 1대
-  - 에뮬레이터 또는 Pixel 계열 1대
-  - 글자 크기 기본/크게
-  - 삼성 키보드/Gboard
+```kotlin
+interface SafetyPolicy {
+    fun evaluate(snapshot: ScreenSnapshot): SafetyDecision
+}
+```
 
+차단: 로그인, 개인정보, 인증번호, 결제, 예매 확정, 구매 확정.
+
+### Scoring
+
+```kotlin
+interface TargetScorer {
+    fun score(snapshot: ScreenSnapshot, command: KorailCommand): List<TargetCandidate>
+}
+
+interface CandidateResolver {
+    fun resolve(candidates: List<TargetCandidate>): List<TargetCandidate>
+}
+```
+
+Scoring rules:
+
+- 정확 키워드 +60
+- 부분 키워드 +35
+- contentDescription +45
+- clickable +20
+- class/position hint +10
+- 일반 텍스트 -20
+- 긴 문장 -30
+- 민감 키워드는 제외
+
+Candidate rules:
+
+- 80+ strong, 65-79 weak, below 65 excluded.
+- 겹치는 rect는 cluster 후 최고 score만 유지.
+- 최대 3개 노출.
+- 안전하게 분리되지 않으면 실패.
+
+### GuideSession
+
+```kotlin
+interface GuideSession {
+    fun begin(command: KorailCommand)
+    fun next(snapshot: ScreenSnapshot): GuideStepResult
+    fun stop(reason: StopReason)
+}
+```
+
+- 최대 3-step.
+- 매 step마다 safety와 score 재계산.
+- 정확도 낮으면 중단.
+
+### Overlay
+
+- `BubbleOverlayController`: bubble 표시, drag, 좌우 edge snap, tap.
+- `MaskOverlayController`: 후보 영역을 비운 흰색 mask 조각 표시.
+- `CandidateHighlighter`: 후보 영역 얇은 초록 테두리.
+- `OverlayLayoutCalculator`: padding, rect overlap, mask rectangle 계산.
+
+마스킹 중 텍스트 설명은 표시하지 않는다. 후보 영역에는 overlay를 두지 않아 실제 코레일톡 터치가 전달되어야 한다.
+
+## State
+
+```kotlin
+enum class GuideState {
+    IDLE,
+    LISTENING,
+    THINKING,
+    GUIDING,
+    SENSITIVE_PAUSE,
+    FAILED
+}
+```
+
+```text
+IDLE -> LISTENING -> THINKING -> GUIDING
+GUIDING -> THINKING
+GUIDING -> SENSITIVE_PAUSE
+GUIDING -> FAILED
+GUIDING -> IDLE
+LISTENING -> IDLE
+```
+
+## Testing
+
+Unit test:
+
+- `DefaultKorailCommandParser`
+- `DefaultSafetyPolicy`
+- `KorailTargetScorer`
+- `ClusterCandidateResolver`
+- `DefaultGuideSession`
+- `OverlayLayoutCalculator`
+
+Manual/device test:
+
+- 접근성 서비스 활성화
+- 코레일톡 package 감지
+- bubble 표시/drag/snap
+- listening 시작/중단
+- 마스킹 표시
+- 실제 앱 터치 전달
+
+Acceptance:
+
+- `./gradlew :app:testDebugUnitTest`
+- `./gradlew :app:assembleDebug`
+
+## Competitive Note
+
+Gemini Live는 화면 공유 기반 범용 상담 AI다. cuee는 코레일톡 위에서 실제로 누를 곳만 남기는 app-specific completion layer다.
